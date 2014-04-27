@@ -1,0 +1,213 @@
+<style>
+canvas {
+  border: 1px solid gray;
+  display: block;
+  margin-bottom: 1em;
+}
+button {
+  border: 1px solid gray;
+  font-family: monospace;
+  display: block;
+}
+
+#sample {
+  display: none;
+}
+
+</style>
+<script>
+var k;
+window.onload = function() {
+  try {
+    var ac = new AudioContext();
+  } catch(e) {
+    var ac = new webkitAudioContext();
+  }
+  function kick(ctx) {
+    this.ctx = ctx;
+    this.body = ctx.createOscillator();
+    this.body.type = "sine";
+    this.highfreq = 200;
+    this.basefreq = 60;
+    this.endfreq = 30;
+    this.duration = 0.3;
+    this.body.frequency.value = this.basefreq;
+    this.body.start(0);
+
+    this.pop = ctx.createOscillator();
+    this.pop.type = "sine";
+    this.pophigh = 150;
+    this.poplow = 100;
+    this.pop.frequency.value = this.pophigh;
+    this.pop.start(0);
+
+    this.click = ctx.createOscillator();
+    this.click.type = "square";
+    this.click.frequency.value = 40;
+    this.click.start(0);
+
+    this.adsrbody = ctx.createGain();
+    this.adsrbody.gain.setValueAtTime(0, 0);
+
+    this.adsrpop = ctx.createGain();
+    this.adsrpop.gain.setValueAtTime(0, 0);
+
+    this.adsrclick = ctx.createGain();
+    this.adsrclick.gain.setValueAtTime(0, 0);
+
+    this.body.connect(this.adsrbody);
+    this.pop.connect(this.adsrpop);
+    this.click.connect(this.adsrclick);
+
+    // does not process
+    this.lowpass = ctx.createBiquadFilter();
+    this.lowpass.type = "lowpass";
+    this.lowpass.frequency.value = 20000;
+
+    this.mixer = ctx.createGain();
+    this.mixer.gain.value = 0.6;
+    this.mixer.connect(this.lowpass)
+
+    this.adsrbody.connect(this.mixer);
+    this.adsrpop.connect(this.mixer);
+    this.adsrclick.connect(this.mixer);
+  }
+  kick.prototype.connect = function(node) {
+    this.lowpass.connect(node);
+  }
+  kick.prototype.trigger = function(velocity, time) {
+    var t = time || this.ctx.currentTime;
+    var v = velocity2gain(velocity);
+    this.body.frequency.setValueAtTime(this.highfreq, t);
+    this.body.frequency.linearRampToValueAtTime(this.basefreq, t + 0.03, 0.05);
+    this.body.frequency.setTargetAtTime(this.endfreq, t + 0.03, 0.3)
+
+    this.pop.frequency.setValueAtTime(this.pophigh, t);
+    this.pop.frequency.setTargetAtTime(this.poplow, t + 0.05, 0.3);
+
+    // adsr
+    this.adsrbody.gain.setValueAtTime(0, t);
+    this.adsrbody.gain.linearRampToValueAtTime(v, t + 0.01);
+    this.adsrbody.gain.setTargetAtTime(0, t + 0.02, 0.07);
+
+    this.adsrpop.gain.setValueAtTime(0, t);
+    this.adsrpop.gain.linearRampToValueAtTime(v/2, t + 0.01);
+    this.adsrpop.gain.setTargetAtTime(0, t + 0.02, 0.02);
+
+    this.adsrclick.gain.setValueAtTime(0, t);
+    this.adsrclick.gain.linearRampToValueAtTime(v/10, t + 0.01);
+    this.adsrclick.gain.setTargetAtTime(0, t + 0.02, 0.003);
+  }
+
+  function velocity2gain(velocity) {
+    return velocity / 127;
+  }
+
+  k= new kick(ac);
+  k.connect(ac.destination);
+  var an = ac.createAnalyser();
+  k.connect(an);
+  an.connect(ac.destination);
+  document.getElementById("kick").addEventListener("click", function() {
+    k.trigger(54);
+  });
+
+  document.getElementById("render").addEventListener("click", function() {
+    try {
+      var off = new OfflineAudioContext(1, 22050, 22050);
+    } catch(e) {
+      var off = new webkitOfflineAudioContext(1, 22050, 44100);
+    }
+    var k2 = new kick(off);
+    k2.trigger(100, 0.0);
+    k2.connect(off.destination);
+    off.oncomplete = function(e) {
+      var buf = e.renderedBuffer;
+      var cvs3 = document.getElementById("sample");
+      cvs3.width = buf.length;
+      cvs3.height = 256;
+      var s = cvs3.getContext("2d");
+      var b = buf.getChannelData(0);
+      s.fillStyle = "#000";
+      function rms(buf, offset, len) {
+        var rms = 0;
+        if (buf.length < offset + len) {
+          len = buf.length - offset;
+        }
+        if (len == 0) {
+          return 0;
+        }
+        for (var i = 0; i < len; i++) {
+          var v = buf[offset + i];
+          rms += Math.sqrt(v * v);
+        }
+        rms /= len;
+        return rms;
+      }
+      var end = 0;
+      for (var i = 0; i < cvs3.width; i++) {
+        if (Math.abs(b[i]) < 1.0) {
+          s.fillStyle = "rgba(255, 0, 0, 0.5)";
+        } else {
+          s.fillStyle = "rgba(0, 0, 255, 1.0)";
+        }
+        s.fillRect(i, 128, 1, b[i] * 128);
+        s.fillStyle = "rgba(0, 255, 0, 0.3)";
+        var rmsvalue = rms(b, i, 10);
+        s.fillRect(i, cvs3.height, 1, -rmsvalue * 128);
+        if (rmsvalue < 0.001 && end == 0) {
+          end = i;
+        }
+      }
+      var final = document.getElementById("final");
+      final.width = 256 * 4;
+      final.height = 256;
+      var fc = final.getContext("2d");
+      fc.drawImage(cvs3, 0, 0, end, cvs3.height, 0, 0, 1000, cvs3.height);
+      final.addEventListener("click", function() {
+        var source = ac.createBufferSource();
+        source.buffer = e.renderedBuffer;
+        source.connect(an);
+        source.start(0);
+      });
+    }
+    off.startRendering();
+  });
+
+  var cvs = document.getElementById("scope");
+  cvs.width = 256 * 4;
+  cvs.height = 256;
+  var c = cvs.getContext("2d");
+  c.fillStyle = "#000";
+
+  var cvs2 = document.getElementById("freq");
+  cvs2.width = 256 * 4;
+  cvs2.height = 256;
+  var c2 = cvs2.getContext("2d");
+  c2.fillStyle = "#000";
+
+  var array = new Uint8Array(512);
+  var fft = new Float32Array(512);
+
+  an.frequencyBinCount = 256;
+
+  function render() {
+    c.clearRect(0, 0, cvs.width, cvs.height);
+    c2.clearRect(0, 0, cvs.width, cvs.height);
+    an.getByteTimeDomainData(array);
+    an.getFloatFrequencyData(fft);
+    for (var i = 0; i < array.length; i++) {
+      c.fillRect(i * 2, 128, 0.8, array[i] - 127);
+      c2.fillRect(i * 2, cvs2.height, 0.8, -((fft[i] + 100) / 70) * cvs2.height)
+    }
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+}
+</script>
+<button id=kick>kick</button>
+<button id=render>render</button>
+<canvas id=scope></canvas>
+<canvas id=freq></canvas>
+<canvas id=sample></canvas>
+<canvas id=final></canvas>
