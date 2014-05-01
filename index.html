@@ -14,9 +14,38 @@ button {
   display: none;
 }
 
+#params {
+  width: 30em;
+  font-family: monospace;
+  line-height: 2.1em;
+  //float: right;
+}
+
+
+#params div {
+  display: flex;
+}
+
+#params span {
+  flex: 1 1 5em;
+}
+
+#params input {
+  flex: 1 1 10em;
+}
+
+#params .label {
+  flex: 1 1 5em;
+}
+
 </style>
 <script>
 var k;
+
+function clamp(v, min, max) {
+  return Math.max(Math.min(v, max), min);
+}
+
 window.onload = function() {
   try {
     var ac = new AudioContext();
@@ -27,23 +56,37 @@ window.onload = function() {
     this.ctx = ctx;
     this.body = ctx.createOscillator();
     this.body.type = "sine";
-    this.highfreq = 200;
-    this.basefreq = 60;
-    this.endfreq = 30;
-    this.duration = 0.3;
-    this.body.frequency.value = this.basefreq;
+
+    this.params = {};
+
+    this.register_param("highfreq", 200, 50, 400, 1);
+    this.register_param("basefreq", 60, 30, 150, 1);
+    this.register_param("endfreq", 30, 15, 100, 1);
+    this.register_param("bodyfreqdecay", 0.3, 0.01, 2, 0.01);
+    this.register_param("bodydecay", 0.07, 0.01, 2, 0.01);
+    this.register_param("bodygain", 1, 0, 2, 0.01);
+
+    this.register_param("popfreqdecay", 0.3, 0.01, 2, 0.01);
+    this.register_param("popdecay", 0.02, 0.001, 0.1, 0.001);
+    this.register_param("popgain", 0.5, 0, 2, 0.01);
+    this.register_param("pophigh", 150, 50, 500, 1);
+    this.register_param("poplow", 100, 30, 400, 1);
+
+    this.register_param("clickdecay", 0.0001, 0.001, 0.005, 0.00001);
+    this.register_param("clickgain", 0.1, 0, 2, 0.01);
+    this.register_param("clickfreq", 40, 20, 10000, 1);
+
+    this.body.frequency.value = this.params["basefreq"].value;
     this.body.start(0);
 
     this.pop = ctx.createOscillator();
     this.pop.type = "sine";
-    this.pophigh = 150;
-    this.poplow = 100;
-    this.pop.frequency.value = this.pophigh;
+    this.pop.frequency.value = this.params["pophigh"].value;
     this.pop.start(0);
 
     this.click = ctx.createOscillator();
     this.click.type = "square";
-    this.click.frequency.value = 40;
+    this.click.frequency.value = this.params["clickfreq"].value;
     this.click.start(0);
 
     this.adsrbody = ctx.createGain();
@@ -72,54 +115,135 @@ window.onload = function() {
     this.adsrpop.connect(this.mixer);
     this.adsrclick.connect(this.mixer);
   }
+
+  kick.prototype.register_param = function(name, initial, min, max, step) {
+    this.params[name] = {};
+    this.params[name].value = initial;
+    this.params[name].min = min;
+    this.params[name].max = max;
+    this.params[name].step = step;
+  }
+
+  kick.prototype.set_param = function(key, val) {
+    var p = this.params[key];
+    p.value = clamp(val, p.min, p.max);
+  }
+
+  kick.prototype.copy_params = function(other) {
+    this.params = other.get_params();
+  }
+
+  kick.prototype.get_param = function(name) {
+    return this.params[name];
+  }
+
   kick.prototype.connect = function(node) {
     this.lowpass.connect(node);
   }
   kick.prototype.trigger = function(velocity, time) {
     var t = time || this.ctx.currentTime;
     var v = velocity2gain(velocity);
-    this.body.frequency.setValueAtTime(this.highfreq, t);
-    this.body.frequency.linearRampToValueAtTime(this.basefreq, t + 0.03, 0.05);
-    this.body.frequency.setTargetAtTime(this.endfreq, t + 0.03, 0.3)
 
-    this.pop.frequency.setValueAtTime(this.pophigh, t);
-    this.pop.frequency.setTargetAtTime(this.poplow, t + 0.05, 0.3);
+    this.body.frequency.value = this.params["basefreq"].value;
+    this.pop.frequency.value = this.params["pophigh"].value;
+    this.click.frequency.value = this.params["clickfreq"].value;
+
+    this.body.frequency.setValueAtTime(this.params["highfreq"].value, t);
+    this.body.frequency.linearRampToValueAtTime(this.params["basefreq"].value, t + 0.001, 0.001);
+    this.body.frequency.setTargetAtTime(this.params["endfreq"].value, t + 0.002, this.params["bodyfreqdecay"].value)
+
+    this.pop.frequency.setValueAtTime(this.params["pophigh"].value, t);
+    this.pop.frequency.setTargetAtTime(this.params["poplow"].value, t + 0.0001, this.params["popfreqdecay"].value);
 
     // adsr
     this.adsrbody.gain.setValueAtTime(0, t);
-    this.adsrbody.gain.linearRampToValueAtTime(v, t + 0.01);
-    this.adsrbody.gain.setTargetAtTime(0, t + 0.02, 0.07);
+    this.adsrbody.gain.linearRampToValueAtTime(v * this.params["bodygain"].value, t + 0.01);
+    this.adsrbody.gain.setTargetAtTime(0, t + 0.02, this.params["bodydecay"].value);
 
     this.adsrpop.gain.setValueAtTime(0, t);
-    this.adsrpop.gain.linearRampToValueAtTime(v/2, t + 0.01);
-    this.adsrpop.gain.setTargetAtTime(0, t + 0.02, 0.02);
+    this.adsrpop.gain.linearRampToValueAtTime(v * this.params["popgain"].value, t + 0001);
+    this.adsrpop.gain.setTargetAtTime(0, t + 0.0002, this.params["popdecay"].value);
 
     this.adsrclick.gain.setValueAtTime(0, t);
-    this.adsrclick.gain.linearRampToValueAtTime(v/10, t + 0.01);
-    this.adsrclick.gain.setTargetAtTime(0, t + 0.02, 0.003);
+    this.adsrclick.gain.setValueAtTime(v * this.params["clickgain"].value, t + 0.0001);
+    this.adsrclick.gain.setTargetAtTime(0, t + 0.0002, this.params["clickdecay"].value);
   }
+
+  kick.prototype.get_params = function() {
+    return this.params;
+  }
+
+  kick.prototype.name = function() {
+    return "kick";
+  }
+
 
   function velocity2gain(velocity) {
     return velocity / 127;
   }
 
-  k= new kick(ac);
-  k.connect(ac.destination);
+  cvswidth = 256 * 3;
+
+  k = new kick(ac);
   var an = ac.createAnalyser();
   k.connect(an);
   an.connect(ac.destination);
   document.getElementById("kick").addEventListener("click", function() {
-    k.trigger(54);
+    k.trigger(80);
   });
 
-  document.getElementById("render").addEventListener("click", function() {
+  function sliders(k, param) {
+    var params_wrapper = document.querySelector("#params");
+    var params = k.get_params();
+    var span = document.createElement("div");
+    span.innerHTML = k.name();
+    params_wrapper.appendChild(span);
+    for (var key in params) {
+      params_wrapper.appendChild(slider(k, key, params[key]));
+    }
+  }
+
+  function slider(k, key, param) {
+    var input = document.createElement("input");
+    input.type = "range";
+    var label = document.createElement("span");
+    label.innerHTML = key;
+    label.className = "label";
+    var value = document.createElement("span")
+    value.innerHTML = param.value;
+    value.className = "value";
+    var box = document.createElement("div");
+    box.appendChild(label);
+    box.appendChild(input);
+    box.appendChild(value);
+    input.min = param.min;
+    input.max = param.max;
+    input.step= param.step;
+    input.value = param.value;
+    input.addEventListener("input", function(e) {
+      k.set_param(key, e.target.value);
+      e.target.parentNode.querySelector(".value").innerHTML = e.target.value;
+      bake();
+    });
+    return box;
+  }
+
+  sliders(k);
+
+  bake();
+
+  document.getElementById("render").addEventListener("click", bake);
+
+  function bake() {
+    var off;
     try {
-      var off = new OfflineAudioContext(1, 22050, 22050);
+      off = new OfflineAudioContext(1, 22050, 22050);
     } catch(e) {
-      var off = new webkitOfflineAudioContext(1, 22050, 44100);
+      off = new webkitOfflineAudioContext(1, 22050, 44100);
     }
     var k2 = new kick(off);
-    k2.trigger(100, 0.0);
+    k2.copy_params(k);
+    k2.trigger(128, 0.0);
     k2.connect(off.destination);
     off.oncomplete = function(e) {
       var buf = e.renderedBuffer;
@@ -160,28 +284,29 @@ window.onload = function() {
         }
       }
       var final = document.getElementById("final");
-      final.width = 256 * 4;
+      final.width = cvswidth;
       final.height = 256;
       var fc = final.getContext("2d");
       fc.drawImage(cvs3, 0, 0, end, cvs3.height, 0, 0, 1000, cvs3.height);
-      final.addEventListener("click", function() {
-        var source = ac.createBufferSource();
+      final.onclick = function() {
+        source = ac.createBufferSource();
         source.buffer = e.renderedBuffer;
         source.connect(an);
         source.start(0);
-      });
+      }
+      off = null;
     }
     off.startRendering();
-  });
+  }
 
   var cvs = document.getElementById("scope");
-  cvs.width = 256 * 4;
+  cvs.width = cvswidth;
   cvs.height = 256;
   var c = cvs.getContext("2d");
   c.fillStyle = "#000";
 
   var cvs2 = document.getElementById("freq");
-  cvs2.width = 256 * 4;
+  cvs2.width = cvswidth;
   cvs2.height = 256;
   var c2 = cvs2.getContext("2d");
   c2.fillStyle = "#000";
@@ -205,9 +330,12 @@ window.onload = function() {
   requestAnimationFrame(render);
 }
 </script>
-<button id=kick>kick</button>
-<button id=render>render</button>
-<canvas id=scope></canvas>
-<canvas id=freq></canvas>
-<canvas id=sample></canvas>
-<canvas id=final></canvas>
+<div id=left>
+  <button id=kick>kick</button>
+  <button id=render>render</button>
+  <canvas id=scope></canvas>
+  <canvas id=freq></canvas>
+  <canvas id=sample></canvas>
+  <canvas id=final></canvas>
+</div>
+<div id=params></div>
